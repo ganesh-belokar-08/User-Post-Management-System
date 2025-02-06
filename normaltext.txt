@@ -1,0 +1,82 @@
+
+const mongoose = require('mongoose');
+
+const UserSchema = new mongoose.Schema({
+    username: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true }
+});
+
+module.exports = mongoose.model('User', UserSchema);
+
+
+//HANDLING AUTHENTICATION WITH THE HELP OF NORAMAL PASSWORD'S
+require('dotenv').config();
+const express = require('express');
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+
+const router = express.Router();
+
+// Register User
+router.post('/register', async (req, res) => {
+    const { username, email, password } = req.body;
+
+    if (!username || !email || !password) {
+        return res.status(400).json({ message: "All fields are required" });
+    }
+
+    try {
+        // Check if user already exists
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+            return res.status(400).json({ message: "User already exists" });
+        }
+
+        // Store the password as plain text (remove the hashing step temporarily)
+        const newUser = new User({ username, email, password });
+        await newUser.save();
+        res.status(201).json({ message: "User Registered Successfully" });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Error registering user" });
+    }
+});
+
+// Login User
+router.post('/login', async (req, res) => {
+    const { email, password } = req.body;
+    try {
+        // Find user by email
+        const user = await User.findOne({ email });
+
+        if (!user) {
+            return res.status(400).json({ message: "Invalid Credentials" });
+        }
+
+        console.log("Entered Password:", password);
+        console.log("Stored Plain Password:", user.password);
+
+        // Check if the entered password matches the stored plain password
+        if (user.password !== password) {
+            return res.status(400).json({ message: "Invalid Credentials" });
+        }
+
+        // Generate JWT token if credentials are valid
+        const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+        res.json({ token });
+
+    } catch (error) {
+        console.error("Error logging in:", error);
+        res.status(500).json({ message: "Error logging in" });
+    }
+});
+
+// Logged-In User
+router.get('/me', require('../middleware/authMiddleware'), async (req, res) => {
+    const user = await User.findById(req.user.id).select('-password');
+    res.json(user);
+});
+
+module.exports = router;

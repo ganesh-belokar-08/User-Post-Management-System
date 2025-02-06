@@ -1,0 +1,143 @@
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+
+const UserSchema = new mongoose.Schema({
+    username: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true }
+});
+
+// Hash password before saving
+UserSchema.pre('save', async function (next) {
+    if (!this.isModified('password')) return next();
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+});
+
+module.exports = mongoose.model('User', UserSchema);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+require('dotenv').config();
+const express = require('express');
+const bcrypt = require('bcryptjs');  
+const argon2 = require('argon2');
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+
+const router = express.Router();
+
+// Register User
+router.post('/register', async (req, res) => {
+    const { username, email, password } = req.body;
+
+    if (!username || !email || !password) {
+        return res.status(400).json({ message: "All fields are required" });
+    }
+
+    try {
+        // Check if user already exists
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+            return res.status(400).json({ message: "User already exists" });
+        }
+
+        // Hash the password using Argon2
+        const hashedPassword = await argon2.hash(password);
+        console.log("Hashed Password:", hashedPassword); // Debugging
+
+        // Create a new user object
+        const newUser = new User({ username, email, password: hashedPassword });
+        await newUser.save();
+        res.status(201).json({ message: "User Registered Successfully" });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Error registering user" });
+    }
+});
+
+// Login User
+router.post('/login', async (req, res) => {
+    const { email, password } = req.body;
+    try {
+        // Find user by email
+        const user = await User.findOne({ email });
+
+        if (!user) {
+            return res.status(400).json({ message: "Invalid Credentials" });
+        }
+
+        console.log("Entered Password:", password);
+        console.log("Stored Hashed Password:", user.password);
+
+        let passwordMatch = false;
+
+        // If the password hash is Argon2 (starts with $argon2)
+        if (user.password.startsWith('$argon2')) {
+            try {
+                passwordMatch = await argon2.verify(user.password, password);
+            } catch (error) {
+                console.log("Error verifying Argon2 password:", error);
+            }
+        } else {
+            // If the password hash is bcrypt (starts with $2a$)
+            console.log("Stored password is bcrypt, checking bcrypt...");
+            passwordMatch = await bcrypt.compare(password, user.password); // Ensure bcrypt is used
+            console.log("Bcrypt Match Result:", passwordMatch);
+
+            // If bcrypt matches, migrate the password to Argon2
+            if (passwordMatch) {
+                console.log("Old bcrypt password matched, updating to Argon2...");
+                user.password = await argon2.hash(password);
+                await user.save();
+                passwordMatch = true;
+            }
+        }
+
+        // If no match, return invalid credentials
+        if (!passwordMatch) {
+            return res.status(400).json({ message: "Invalid Credentials" });
+        }
+
+        // Generate JWT token if credentials are valid
+        const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+        res.json({ token });
+
+    } catch (error) {
+        console.error("Error logging in:", error);
+        res.status(500).json({ message: "Error logging in" });
+    }
+});
+
+
+
+// Logged-In User
+router.get('/me', require('../middleware/authMiddleware'), async (req, res) => {
+    const user = await User.findById(req.user.id).select('-password');
+    res.json(user);
+});
+
+module.exports = router;
